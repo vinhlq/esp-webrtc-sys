@@ -1,0 +1,23 @@
+[package]
+name = "esp-webrtc-sys"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+
+[build-dependencies]
+embuild = { version = "0.32", features = ["git", "bindgen"] }
+bindgen = "0.70"
+
+[package.metadata.esp-idf-sys]
+extra_components = [
+  { component_dirs = [
+      "esp-webrtc-solution/components/esp_webrtc",
+      "esp-webrtc-solution/components/webrtc_utils",
+      "esp-webrtc-solution/components/media_lib_utils",
+      "esp-webrtc-solution/components/esp_peer",
+      "esp-webrtc-solution/components/av_render",
+      "esp-webrtc-solution/components/codec_board",
+  ] }
+]

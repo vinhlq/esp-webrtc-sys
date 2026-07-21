@@ -1,0 +1,95 @@
+diff --git a/components/esp_webrtc/idf_component.yml b/components/esp_webrtc/idf_component.yml
+index 336bbc8..2f6fdb1 100755
+--- a/components/esp_webrtc/idf_component.yml
++++ b/components/esp_webrtc/idf_component.yml
+@@ -16,3 +16,4 @@ dependencies:
+   tempotian/av_render:
+     require: public
+     version: "~0.9"
++    override_path: ../av_render
+diff --git a/components/esp_webrtc/impl/apprtc_signal/https_client.c b/components/esp_webrtc/impl/apprtc_signal/https_client.c
+index 32bf0d1..33ccd17 100644
+--- a/components/esp_webrtc/impl/apprtc_signal/https_client.c
++++ b/components/esp_webrtc/impl/apprtc_signal/https_client.c
+@@ -82,23 +82,20 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
+                      evt->header_value);
+             break;
+         case HTTP_EVENT_ON_DATA:
+-            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+-            if (!esp_http_client_is_chunked_response(evt->client)) {
+-                int content_len = esp_http_client_get_content_length(evt->client);
+-                if (info->data == NULL && content_len) {
+-                    info->data = malloc(content_len);
+-                    if (info->data) {
+-                        info->size = content_len;
+-                    }
+-                }
+-                if (evt->data_len && info->fill_size + evt->data_len <= info->size) {
++            ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d, fill_size=%d", evt->data_len, info->fill_size);
++            if (evt->data_len > 0) {
++                uint8_t *new_data = realloc(info->data, info->fill_size + evt->data_len + 1);
++                if (new_data) {
++                    info->data = new_data;
+                     memcpy(info->data + info->fill_size, evt->data, evt->data_len);
+                     info->fill_size += evt->data_len;
++                    info->size = info->fill_size;
++                    info->data[info->fill_size] = '\0'; // null-terminate just in case
+                 }
+             }
+             break;
+         case HTTP_EVENT_ON_FINISH:
+-            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
++            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH, fill_size=%d, body_ptr=%p", info->fill_size, info->body);
+             if (info->fill_size && info->body) {
+                 http_resp_t resp = {
+                     .data = (char *)info->data,
+@@ -204,9 +201,11 @@ int https_request_advance(https_request_cfg_t *cfg, https_request_t *req)
+     esp_http_client_config_t http_config = {
+         .url = req->url,
+         .event_handler = _http_event_handler,
+-#ifdef CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+-        .crt_bundle_attach = esp_crt_bundle_attach,
+-#endif
++// #ifdef CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
++//         .crt_bundle_attach = esp_crt_bundle_attach,
++// #endif
++        .cert_pem = NULL,
++        .skip_cert_common_name_check = true,
+         .timeout_ms = cfg->timeout_ms ? cfg->timeout_ms : default_cfg.timeout_ms,
+         .buffer_size = cfg->buffer_size ? cfg->buffer_size : default_cfg.buffer_size,
+         .buffer_size_tx = cfg->buffer_size_tx ? cfg->buffer_size_tx : default_cfg.buffer_size_tx,
+diff --git a/components/esp_webrtc/impl/whip_signal/whip_signaling.c b/components/esp_webrtc/impl/whip_signal/whip_signaling.c
+index 14f7f25..54e072a 100644
+--- a/components/esp_webrtc/impl/whip_signal/whip_signaling.c
++++ b/components/esp_webrtc/impl/whip_signal/whip_signaling.c
+@@ -224,10 +224,29 @@ static int whip_signaling_send_msg(esp_peer_signaling_handle_t h, esp_peer_signa
+ 
+     } else if (msg->type == ESP_PEER_SIGNALING_MSG_SDP) {
+         if (sig->local_sdp_sent == false) {
++            ESP_LOGI(TAG, "Original SDP Offer:\n%s", (char *)msg->data);
++            char new_sdp[2048] = {0};
++            char *sdp_copy = strdup((char *)msg->data);
++            char *line = strtok(sdp_copy, "\r\n");
++            while (line != NULL) {
++                if (strncmp(line, "a=sendrecv", 10) == 0) {
++                    strcat(new_sdp, "a=sendonly\r\n");
++                } else if (strncmp(line, "a=group:BUNDLE", 14) == 0) {
++                    strcat(new_sdp, "a=group:BUNDLE 0\r\n"); // Drop datachannel from bundle
++                } else {
++                    strcat(new_sdp, line);
++                    strcat(new_sdp, "\r\n");
++                }
++                line = strtok(NULL, "\r\n");
++            }
++            free(sdp_copy);
++
++            ESP_LOGI(TAG, "Modified SDP Offer:\n%s", new_sdp);
++
+             char content_type[] = "Content-Type: application/sdp";
+             char *auth = get_auth_header(sig->whip_cfg);
+             char *header[] = { content_type, auth, NULL };
+-            int ret = https_post(sig->cfg.signal_url, header, (char *)msg->data, whip_sdp_header, whip_sdp_answer, h);
++            int ret = https_post(sig->cfg.signal_url, header, new_sdp, whip_sdp_header, whip_sdp_answer, h);
+             SAFE_FREE(auth);
+             if (ret != 0 || sig->remote_sdp == NULL) {
+                 ESP_LOGE(TAG, "Fail to post data to %s", sig->cfg.signal_url);

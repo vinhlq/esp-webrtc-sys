@@ -1,0 +1,6 @@
+#include "esp_webrtc.h"
+#include "esp_webrtc_defaults.h"
+#include "esp_peer_whip_signaling.h"
+#include "esp_capture.h"
+#include "av_render.h"
+#include "esp_peer_signaling.h"
