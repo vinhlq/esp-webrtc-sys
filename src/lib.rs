@@ -199,3 +199,88 @@ pub struct esp_peer_signaling_impl_t {
     pub send_msg: Option<unsafe extern "C" fn(sig: esp_peer_signaling_handle_t, msg: *mut esp_peer_signaling_msg_t) -> i32>,
     pub stop: Option<unsafe extern "C" fn(sig: esp_peer_signaling_handle_t) -> i32>,
 }
+
+// ===========================================================================
+// Layout verification
+// ===========================================================================
+//
+// Every type above is transcribed by hand from the vendored `esp-webrtc-solution` headers, and
+// `build.rs` does not run bindgen. Nothing in the build would notice if a vendor update reordered a
+// field: the struct would still compile, and C would read a callback pointer out of what Rust wrote
+// as an integer. That failure is silent and looks like a crash somewhere unrelated.
+//
+// These assertions are the substitute for bindgen. They are `const`, so a mismatch fails the build
+// rather than the device, and they need no C toolchain to check.
+//
+// The expected values were taken from the vendored headers compiled for the real target with
+// `xtensa-esp32s3-elf-gcc`, and independently reproduced with host `gcc -m32`; both agreed on every
+// size and offset below. Note the agreement is not general — x86-32 aligns 64-bit members to 4
+// bytes where Xtensa uses 8 — it holds here only because none of these structs contain a 64-bit
+// member. If one ever gains a `u64`/`f64`, re-derive these numbers with the target compiler.
+//
+// All offsets are for a 32-bit target (4-byte pointers), which every supported chip is.
+const _: () = {
+  use core::mem::{align_of, offset_of, size_of};
+
+  macro_rules! assert_layout {
+    ($t:ty, $size:expr) => {
+      assert!(size_of::<$t>() == $size);
+      assert!(align_of::<$t>() == 4);
+    };
+  }
+
+  assert_layout!(esp_peer_ice_server_cfg_t, 12);
+  assert!(offset_of!(esp_peer_ice_server_cfg_t, stun_url) == 0);
+  assert!(offset_of!(esp_peer_ice_server_cfg_t, user) == 4);
+  assert!(offset_of!(esp_peer_ice_server_cfg_t, psw) == 8);
+
+  assert_layout!(esp_peer_audio_stream_info_t, 12);
+  assert_layout!(esp_peer_video_stream_info_t, 16);
+
+  // The one the review called tricky: nested structs, an enum, and a run of four `bool`s that must
+  // pack into bytes 48..52 rather than being padded apart.
+  assert_layout!(esp_webrtc_peer_cfg_t, 84);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, server_lists) == 0);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, server_num) == 4);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, ice_trans_policy) == 8);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, audio_info) == 12);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, video_info) == 24);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, audio_dir) == 40);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, video_dir) == 44);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, enable_data_channel) == 48);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, manual_ch_create) == 49);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, video_over_data_channel) == 50);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, no_auto_reconnect) == 51);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, extra_cfg) == 52);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, extra_size) == 56);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, ctx) == 60);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, on_custom_data) == 64);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, on_channel_open) == 68);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, on_data) == 72);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, on_channel_close) == 76);
+  assert!(offset_of!(esp_webrtc_peer_cfg_t, on_video_send) == 80);
+
+  assert_layout!(esp_webrtc_signaling_cfg_t, 16);
+  assert_layout!(esp_webrtc_cfg_t, 108);
+  assert!(offset_of!(esp_webrtc_cfg_t, signaling_impl) == 0);
+  assert!(offset_of!(esp_webrtc_cfg_t, signaling_cfg) == 4);
+  assert!(offset_of!(esp_webrtc_cfg_t, peer_impl) == 20);
+  assert!(offset_of!(esp_webrtc_cfg_t, peer_cfg) == 24);
+
+  assert_layout!(esp_peer_audio_frame_t, 12);
+  assert_layout!(esp_peer_signaling_whip_cfg_t, 8);
+
+  assert_layout!(esp_webrtc_event_t, 8);
+  assert!(offset_of!(esp_webrtc_event_t, type_) == 0);
+  assert!(offset_of!(esp_webrtc_event_t, body) == 4);
+
+  assert_layout!(esp_peer_signaling_msg_t, 12);
+  assert_layout!(esp_peer_signaling_ice_info_t, 16);
+  assert_layout!(esp_peer_signaling_cfg_t, 32);
+
+  // C enums cross this boundary as plain ints; these must stay 4 bytes.
+  assert!(size_of::<esp_peer_ice_trans_policy_t>() == 4);
+  assert!(size_of::<esp_peer_media_dir_t>() == 4);
+  assert!(size_of::<esp_webrtc_event_type_t>() == 4);
+  assert!(size_of::<esp_peer_signaling_msg_type_t>() == 4);
+};
